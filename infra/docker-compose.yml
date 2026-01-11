@@ -1,0 +1,89 @@
+version: '3.8'
+
+services:
+  # BACKEND - Python/FastAPI
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: orchestralink-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../backend/app:/app/app # Hot-reload code changes
+      - ../backend/logs:/app/logs # Persist logs
+    environment:
+      - DATABASE_URL=postgresql+psycopg2://postgres:postgres@database:5432/postgres
+      - MQTT_BROKER=broker
+      - MQTT_PORT=1883
+    depends_on:
+      database:
+        condition: service_healthy # Wait for DB to be truly ready
+      broker:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - orchestralink-net
+
+  # FRONTEND - React
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    container_name: orchestralink-frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ../frontend/src:/app/src # Hot-reload React components
+    environment:
+      - REACT_APP_API_URL=http://localhost:8000
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - orchestralink-net
+
+  # DATABASE - PostgreSQL
+  database:
+    image: postgres:15-alpine
+    container_name: orchestralink-db
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: always
+    networks:
+      - orchestralink-net
+
+  # BROKER - Mosquitto
+  broker:
+    image: eclipse-mosquitto:2.0
+    container_name: orchestralink-broker
+    ports:
+      - "1883:1883" # MQTT
+      - "9001:9001" # WebSockets
+    volumes:
+      - ../mosquitto/mosquitto_config:/mosquitto/config
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_log:/mosquitto/log
+    restart: unless-stopped
+    networks:
+      - orchestralink-net
+
+volumes:
+  postgres_data:
+  mosquitto_data:
+  mosquitto_log:
+
+networks:
+  orchestralink-net:
+    driver: bridge
